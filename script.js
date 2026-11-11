@@ -60,6 +60,7 @@ $$('[data-policy]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault()
   removeItem(key){try{localStorage.removeItem(key);sessionStorage.removeItem(key);}catch(_){} }
  };
  const client=window.supabase?.createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true,storage:rememberStorage}});window.lendvestraSupabaseClient=client;
+ const getAuthRedirectUrl=()=>{if(!['http:','https:'].includes(window.location.protocol))throw new Error('Email verification requires a website URL. Open this site over HTTPS or through a local web server, not directly as a file.');return new URL(window.location.pathname,window.location.origin).href;};
  const gate=document.getElementById('authGate'),dash=document.getElementById('customerDashboard'),site=document.getElementById('publicSite'),footer=document.querySelector('.footer');
  const form=document.getElementById('entryForm'),nameWrap=document.getElementById('entryName'),heading=document.getElementById('authHeading'),subtitle=document.getElementById('authSubtitle'),submit=document.getElementById('entrySubmit'),err=document.getElementById('authError');let mode='signup';
  function setMode(next){mode=next;const signup=mode==='signup';document.getElementById('rememberSessionWrap').hidden=signup;if(signup)document.getElementById('rememberSession').checked=false;nameWrap.hidden=!signup;document.getElementById('signupDetails').hidden=!signup;document.getElementById('entryConfirmWrap').hidden=!signup;document.getElementById('entryFullName').required=signup;['entryPhone','entryCountry','entryAddress','entryCity','entryRegion','entryEmployment','entryTerms','entryConfirmPassword'].forEach(id=>{const el=document.getElementById(id);if(el)el.required=signup});document.getElementById('entryPassword').autocomplete=signup?'new-password':'current-password';document.getElementById('entryPassword').minLength=8;document.getElementById('entryConfirmPassword').required=signup;heading.textContent=signup?'Create your account':'Welcome back';subtitle.textContent=signup?'Create your account to get started. Verify your email before accessing your dashboard.':'Sign in to continue to your LENDVESTRA dashboard.';submit.textContent=signup?'Create account':'Sign in';document.getElementById('tabSignin').classList.toggle('active',!signup);document.getElementById('tabSignup').classList.toggle('active',signup);document.getElementById('forgotPassword').hidden=signup;document.getElementById('resendConfirmation').hidden=true;err.textContent='';restoreAuthErrorStyle()}
@@ -90,6 +91,22 @@ $$('[data-policy]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault()
   if(notice)notice.textContent='Your records were refreshed '+new Date().toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})+'.';
  }
 
+
+(() => {
+ const preloader = document.getElementById('sitePreloader');
+ if (!preloader) return;
+ let closing = false;
+ const dismiss = () => {
+  if (closing) return;
+  closing = true;
+  preloader.classList.add('is-leaving');
+  window.setTimeout(() => preloader.remove(), 400);
+ };
+ if (document.readyState === 'complete') dismiss();
+ else window.addEventListener('load', dismiss, { once: true });
+ window.setTimeout(dismiss, 3000);
+})();
+
  document.getElementById('refreshCustomerRecords')?.addEventListener('click',async()=>{const b=document.getElementById('refreshCustomerRecords');if(!client){return;}b.disabled=true;try{const {data:{user},error}=await client.auth.getUser();if(error||!user||!user.email_confirmed_at)throw new Error('Please sign in again to refresh your records.');await loadCustomerRecords(user.id);}catch(e){const n=document.getElementById('dashboardRefreshMessage');if(n)n.textContent=e.message||'Refresh failed. Please try again.';}finally{b.disabled=false;}});
  function enterDashboard(user){const loader=document.getElementById('dashboardPreloader');const loaderLogo=loader.querySelector('.loader-logo');const brandLogo=document.querySelector('.auth-brand img');if(brandLogo)loaderLogo.src=brandLogo.src;gate.hidden=true;dash.hidden=true;site.classList.add('hidden');footer?.classList.add('hidden');loader.hidden=false;const displayName=user?.user_metadata?.full_name||user?.email||'there';document.getElementById('dashWelcome').textContent='Welcome, '+displayName+'. Here is your personal account overview.';const put=(id,value)=>{const el=document.getElementById(id);if(el)el.textContent=value||'—'};const meta=user?.user_metadata||{};put('profileFullName',meta.full_name||'Not provided at registration');put('profileEmail',user?.email||'—');put('profileCreatedAt',user?.created_at?new Date(user.created_at).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'}):'—');put('profileEmailStatus',user?.email_confirmed_at?'Verified':'Not verified');put('profileAccountRef',user?.id?user.id.slice(0,8).toUpperCase():'—');put('profileStatus',user?.email_confirmed_at?'Email verified':'Email confirmation pending');put('profileVerification',user?.email_confirmed_at?'Email verified':'Email not verified');put('profilePhone',meta.phone_number);put('profileCountry',meta.country);put('profileAddress',[meta.address_line,meta.city,meta.region,meta.postal_code].filter(Boolean).join(', '));put('profileEmployment',meta.employment_status?.replaceAll('_',' '));if(client&&user?.id){client.from('profiles').select('full_name,phone_number,country,address_line,city,region,postal_code,employment_status').eq('id',user.id).maybeSingle().then(({data,error})=>{if(error){console.warn('Customer profile could not be loaded. Run the supplied Supabase schema SQL and confirm RLS policies.',error.message);return;}if(data){put('profileFullName',data.full_name||meta.full_name);put('profilePhone',data.phone_number);put('profileCountry',data.country);put('profileAddress',[data.address_line,data.city,data.region,data.postal_code].filter(Boolean).join(', '));put('profileEmployment',data.employment_status?.replaceAll('_',' '));}});loadCustomerRecords(user.id);}window.scrollTo(0,0);window.setTimeout(()=>{loader.hidden=true;dash.hidden=false;window.scrollTo(0,0)},650)}
  form.addEventListener('submit',async e=>{e.preventDefault();restoreAuthErrorStyle();showAuthError('');if(!form.reportValidity())return;if(!client){showAuthError('Supabase connection library did not load. Check your internet connection and refresh.');return;}const email=document.getElementById('entryEmail').value.trim();const password=document.getElementById('entryPassword').value;submit.disabled=true;submit.textContent=mode==='signup'?'Creating account…':'Signing in…';
@@ -100,7 +117,7 @@ $$('[data-policy]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault()
     if(password!==confirmPassword)throw new Error('Your passwords do not match.');
     if(password.length<8)throw new Error('Use a password with at least 8 characters.');
     const profile={full_name:fullName,phone_number:document.getElementById('entryPhone').value.trim(),country:document.getElementById('entryCountry').value.trim(),address_line:document.getElementById('entryAddress').value.trim(),city:document.getElementById('entryCity').value.trim(),region:document.getElementById('entryRegion').value.trim(),postal_code:document.getElementById('entryPostal').value.trim(),employment_status:document.getElementById('entryEmployment').value};
-    const {data,error}=await client.auth.signUp({email,password,options:{data:profile,emailRedirectTo:window.location.origin+window.location.pathname}});
+    const {data,error}=await client.auth.signUp({email,password,options:{data:profile,emailRedirectTo:getAuthRedirectUrl()}});
     if(error)throw error;
     if(data.session&&data.user?.email_confirmed_at){form.reset();enterDashboard(data.user);showToast('Your account has been created successfully.');}
     else{document.getElementById('entryEmail').value=email;setMode('signin');document.getElementById('resendConfirmation').hidden=false;document.getElementById('resendConfirmation').style.display='block';showAuthSuccess('Account created. Check your inbox and spam folder for the confirmation link. You must verify your email before signing in. If it does not arrive, use Resend confirmation email.');}
@@ -112,8 +129,8 @@ $$('[data-policy]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault()
   }catch(error){showAuthError(error?.message||'Something went wrong. Please try again.');}
   finally{submit.disabled=false;submit.textContent=mode==='signup'?'Create account':'Sign in';}
  });
- document.getElementById('resendConfirmation').addEventListener('click',async()=>{restoreAuthErrorStyle();showAuthError('');const email=document.getElementById('entryEmail').value.trim();if(!email){showAuthError('Enter your email address first.');return;}if(!client){showAuthError('Supabase connection library did not load. Refresh and try again.');return;}const btn=document.getElementById('resendConfirmation');btn.disabled=true;try{const {error}=await client.auth.resend({type:'signup',email,options:{emailRedirectTo:window.location.origin+window.location.pathname}});if(error)throw error;showAuthSuccess('If the address can receive a confirmation, a new email has been requested. Check your inbox and spam folder.');}catch(error){showAuthError(error?.message||'Unable to resend the confirmation email right now.');}finally{btn.disabled=false;}});
- document.getElementById('forgotPassword').addEventListener('click',async()=>{restoreAuthErrorStyle();showAuthError('');const email=document.getElementById('entryEmail').value.trim();if(!email){showAuthError('Enter your email address first, then tap Forgot password again.');return;}if(!client){showAuthError('Connection library did not load. Refresh and try again.');return;}const btn=document.getElementById('forgotPassword');btn.disabled=true;try{const {error}=await client.auth.resetPasswordForEmail(email,{redirectTo:window.location.origin+window.location.pathname});if(error)throw error;showAuthSuccess('If an account exists for this email, a password-reset link will be sent. Check your inbox.');}catch(error){showAuthError(error.message||'Unable to request a password reset.');}finally{btn.disabled=false;}});
+ document.getElementById('resendConfirmation').addEventListener('click',async()=>{restoreAuthErrorStyle();showAuthError('');const email=document.getElementById('entryEmail').value.trim();if(!email){showAuthError('Enter your email address first.');return;}if(!client){showAuthError('Supabase connection library did not load. Refresh and try again.');return;}const btn=document.getElementById('resendConfirmation');btn.disabled=true;try{const {error}=await client.auth.resend({type:'signup',email,options:{emailRedirectTo:getAuthRedirectUrl()}});if(error)throw error;showAuthSuccess('If the address can receive a confirmation, a new email has been requested. Check your inbox and spam folder.');}catch(error){showAuthError(error?.message||'Unable to resend the confirmation email right now.');}finally{btn.disabled=false;}});
+ document.getElementById('forgotPassword').addEventListener('click',async()=>{restoreAuthErrorStyle();showAuthError('');const email=document.getElementById('entryEmail').value.trim();if(!email){showAuthError('Enter your email address first, then tap Forgot password again.');return;}if(!client){showAuthError('Connection library did not load. Refresh and try again.');return;}const btn=document.getElementById('forgotPassword');btn.disabled=true;try{const {error}=await client.auth.resetPasswordForEmail(email,{redirectTo:getAuthRedirectUrl()});if(error)throw error;showAuthSuccess('If an account exists for this email, a password-reset link will be sent. Check your inbox.');}catch(error){showAuthError(error.message||'Unable to request a password reset.');}finally{btn.disabled=false;}});
  document.getElementById('logoutBtn').addEventListener('click',async()=>{if(client){const {error}=await client.auth.signOut();if(error){showToast('Sign out failed. Please try again.');return;}}document.getElementById('dashboardPreloader').hidden=true;dash.hidden=true;gate.hidden=false;site.classList.remove('hidden');footer?.classList.remove('hidden');window.scrollTo(0,0);form.reset();setMode('signin')});
  document.getElementById('dashTheme').addEventListener('click',()=>document.getElementById('themeToggle').click());document.querySelectorAll('[data-dash-action]').forEach(b=>b.addEventListener('click',()=>{openModal(b.dataset.dashAction); }));
  // Public landing page is the default entry point. Authentication opens only when requested.
@@ -124,22 +141,6 @@ $$('[data-policy]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault()
  if(client){client.auth.getSession().then(async ({data,error})=>{if(!error&&data?.session){if(data.session.user?.email_confirmed_at){enterDashboard(data.session.user);}else{await client.auth.signOut();showAuthError('Please verify your email address before accessing your dashboard.');}}});client.auth.onAuthStateChange((event,session)=>{if(session?.user&&event==='SIGNED_IN'){if(session.user.email_confirmed_at){enterDashboard(session.user);}else{showAuthError('Please verify your email address before accessing your dashboard.');client.auth.signOut();}}else if(event==='SIGNED_OUT'){document.getElementById('dashboardPreloader').hidden=true;dash.hidden=true;gate.hidden=true;site.classList.remove('hidden');footer?.classList.remove('hidden');}});}else{showAuthError('Supabase connection library did not load. Check your internet connection and refresh.');}
 })();
 
-(()=>{
- const preloader=document.getElementById('sitePreloader');
- if(!preloader)return;
- const startedAt=performance.timeOrigin;
- let closing=false;
- const dismiss=()=>{
-  if(closing)return;
-  closing=true;
-  window.setTimeout(()=>{
-   preloader.classList.add('is-leaving');
-   window.setTimeout(()=>preloader.remove(),400);
-    },Math.max(0,15000-(Date.now()-startedAt)));
- };
- window.addEventListener('load',dismiss,{once:true});
- window.setTimeout(dismiss,Math.max(0,15000-(Date.now()-startedAt)));
-})();
 } else if (page === "admin") {
 (()=>{'use strict';
 const SUPABASE_URL='https://cgzvqtrasdcjfylfuktf.supabase.co';
